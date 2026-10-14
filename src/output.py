@@ -1,5 +1,7 @@
-"""Sonuc Excel'i (GUI'siz): iki sayfa, satirlar tum sutunlariyla.
+"""Sonuc Excel'i (GUI'siz): ozet + iki sayfa, satirlar tum sutunlariyla.
 
+'Summary' (ilk sayfa, kullanici 2026-10-14): departman basina yesil (checklist'i
+olan RIA) / kirmizi (eksik RIA) sayisi + toplamin yuzde pastasi.
 'Has Checklist': RIA'nin butun sutunlari + yaninda checklist'in butun
 sutunlari; bir RIA'nin birden fazla checklist'i varsa her biri ayri satir.
 'Missing Checklist': checklist'i olmayan RIA'lar, butun sutunlari.
@@ -16,6 +18,11 @@ import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+SUMMARY_SHEET = "Summary"
+DEPARTMENT_COLUMN = "Department Codes"
+NO_DEPARTMENT = "(no department)"
+GREEN = "2B8A3E"
+RED = "C92A2A"
 MATCHED_SHEET = "Has Checklist"
 MISSING_SHEET = "Missing Checklist"
 FILE_NAME = "CheckList Result.xlsx"
@@ -103,6 +110,87 @@ def _sheet(ws, header, fills, rows, tab):
         ws.auto_filter.ref = f"A1:{get_column_letter(len(header))}{max(1, len(rows) + 1)}"
 
 
+def summary_rows(result):
+    """[(departman, yesil, kirmizi)], cok RIA'li departman once. Yesil RIA sayar,
+    checklist satiri degil (bir RIA'nin iki checklist'i bir kez sayilir)."""
+    h = result.ria_header
+    d = h.index(DEPARTMENT_COLUMN) if DEPARTMENT_COLUMN in h else None
+    n = h.index("Document Number")
+
+    def dept(r):
+        v = r[d] if d is not None else None
+        return str(v).strip() if v not in (None, "") else NO_DEPARTMENT
+    green, red = {}, {}
+    seen = set()
+    for r, _ in result.matched:
+        key = str(r[n]).strip().upper()
+        if key not in seen:
+            seen.add(key)
+            green[dept(r)] = green.get(dept(r), 0) + 1
+    for r in result.missing:
+        red[dept(r)] = red.get(dept(r), 0) + 1
+    names = sorted(set(green) | set(red), key=lambda k: (-(green.get(k, 0) + red.get(k, 0)), k))
+    return [(k, green.get(k, 0), red.get(k, 0)) for k in names]
+
+
+def _summary(ws, result):
+    from openpyxl.chart import PieChart, Reference
+    from openpyxl.chart.label import DataLabelList
+    from openpyxl.chart.series import DataPoint
+    ws.sheet_properties.tabColor = "1D2420"
+    thin = Side(style="thin", color="BFBFBF")
+    rows = summary_rows(result)
+    ws.append(["Department", "Has Checklist", "Missing Checklist"])
+    for j, fill in enumerate(("D9D9D9", "E2EFDA", "F8D7D7"), 1):
+        c = ws.cell(1, j)
+        c.font = Font(bold=True, color={2: GREEN, 3: RED}.get(j, "000000"))
+        c.fill = PatternFill("solid", fgColor=fill)
+        c.border = Border(bottom=thin)
+    for r in rows:
+        ws.append(list(r))
+    ws.append(["Total", sum(r[1] for r in rows), sum(r[2] for r in rows)])
+    total = ws.max_row
+    for j in (1, 2, 3):
+        ws.cell(total, j).font = Font(bold=True)
+        ws.cell(total, j).border = Border(top=thin)
+    for r in range(2, total):
+        ws.cell(r, 2).font = Font(color=GREEN)
+        ws.cell(r, 3).font = Font(color=RED)
+    ws.column_dimensions["A"].width = max(14, min(MAX_WIDTH, max((len(r[0]) for r in rows), default=10) + 2))
+    ws.column_dimensions["B"].width = ws.column_dimensions["C"].width = 18
+    ws.freeze_panes = "A2"
+    # pasta: Total satiri (yesil / kirmizi), dilim adlari baslik satirindan
+    pie = PieChart()
+    pie.title = "Checklist coverage"
+    pie.add_data(Reference(ws, min_col=1, max_col=3, min_row=total, max_row=total), from_rows=True,
+                 titles_from_data=True)
+    pie.set_categories(Reference(ws, min_col=2, max_col=3, min_row=1, max_row=1))
+    s = pie.series[0]
+    for i, color in enumerate((GREEN, RED)):
+        pt = DataPoint(idx=i)
+        pt.graphicalProperties.solidFill = color
+        pt.graphicalProperties.line.solidFill = "FFFFFF"
+        s.dPt.append(pt)
+    from openpyxl.chart.text import RichText
+    from openpyxl.drawing.text import CharacterProperties, Paragraph, ParagraphProperties
+    s.dLbls = DataLabelList()
+    s.dLbls.showPercent = True
+    s.dLbls.showVal = s.dLbls.showCatName = s.dLbls.showSerName = False
+    s.dLbls.showLegendKey = s.dLbls.showLeaderLines = False
+    s.dLbls.position = "ctr"
+    white = CharacterProperties(sz=1400, b=True, solidFill="FFFFFF")
+    s.dLbls.txPr = RichText(p=[Paragraph(pPr=ParagraphProperties(defRPr=white), endParaRPr=white)])
+    pie.legend.position = "b"
+    pie.legend.overlay = False
+    pie.height, pie.width = 10, 12
+    # Baslik grafigin icinde pastanin ustune biniyordu (Excel'de olculdu; elle
+    # yerlesim yok sayildi): hucrede, grafigin hemen ustunde.
+    ws.cell(total + 2, 1, pie.title.tx.rich.p[0].r[0].t).font = Font(bold=True, size=12)
+    pie.title = None
+    # tablonun altina: yazdirinca tek sayfa (yanina konunca ikiye bolunuyordu, olculdu)
+    ws.add_chart(pie, f"A{total + 3}")
+
+
 def write(result, out_path):
     out_path = Path(out_path)
     wb = openpyxl.Workbook()
@@ -112,6 +200,8 @@ def write(result, out_path):
     _sheet(ws, rh + ch, [RIA_FILL] * len(rh) + [CHECK_FILL] * len(ch),
            [list(r) + list(c) for r, c in result.matched], MATCHED_TAB)
     _sheet(wb.create_sheet(MISSING_SHEET), rh, [RIA_FILL] * len(rh), [list(r) for r in result.missing], MISSING_TAB)
+    _summary(wb.create_sheet(SUMMARY_SHEET, 0), result)
+    wb.active = 0
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(suffix=".xlsx", dir=out_path.parent)
     os.close(fd)
