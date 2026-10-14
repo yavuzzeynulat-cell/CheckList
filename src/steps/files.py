@@ -73,6 +73,11 @@ class FilesStep(Step):
         if self._hook is not None:
             self._poll()
 
+    def window_shown(self):
+        # Acilistaki solma (-alpha) WS_EX_ACCEPTFILES'i siliyor: yeniden ac.
+        if self._hook is not None:
+            self._hook.accept()
+
     def _poll(self):
         try:
             for paths in self._hook.drain():
