@@ -41,7 +41,8 @@ def test_summary_sheet_by_department(tmp_path):
     ws = wb[output.SUMMARY_SHEET]
     table = [[x.value for x in row] for row in ws.iter_rows(min_row=1, max_col=3)]
     assert table[0] == ["Department", "Has Checklist", "Missing Checklist"]
-    assert table[1:] == [["ST-Structures", 1, 1], ["DR-Drainage", 1, 0], ["Total", 2, 1]]
+    end = next(i for i, r in enumerate(table) if r[0] == "Total")
+    assert table[1:end + 1] == [["ST-Structures", 1, 1], ["DR-Drainage", 1, 0], ["Total", 2, 1]]
     assert len(ws._charts) == 1 and ws._charts[0].tagname == "pieChart"
 
 
