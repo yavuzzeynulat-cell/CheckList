@@ -1,0 +1,11 @@
+/*.xlsx
+__pycache__/
+build/out/
+dist/
+*.pyc
+license_secret.txt
+build/work/
+build/out/
+src_backup/
+src_new/
+.superpowers/
