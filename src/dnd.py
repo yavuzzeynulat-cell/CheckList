@@ -87,6 +87,16 @@ class _DropHook:
             except queue.Empty:
                 return out
 
+    def accept(self) -> None:
+        """Birakmayi yeniden ac. Tk'nin `wm attributes -alpha` ayari pencerenin
+        genisletilmis stilini yeniden yaziyor ve WS_EX_ACCEPTFILES'i siliyor
+        (olculdu 2026-10-14): alpha her degistiginde bu cagrilmali."""
+        try:
+            _, shell32, _, _ = _win_api()
+            shell32.DragAcceptFiles(self.hwnd, True)
+        except Exception:
+            pass
+
     def uninstall(self) -> None:
         try:
             _, shell32, _, set_long = _win_api()

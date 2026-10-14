@@ -75,6 +75,26 @@ class SettingsStep(Step):
     def default_off(self):
         return [(k, sorted(v)) for k, v in sorted(settings.load_default_exclude().items()) if v]
 
+    def add_default(self, part, value):
+        """Varsayilan filtreye kapali deger ekler (kullanici 2026-10-14: "default
+        filtresine ekleme cikarma yok"). Degerler Document Number'daki gibi buyuk harf."""
+        value = str(value or "").strip().upper()
+        if part not in riafilter.PARTS or not value:
+            return False
+        ex = settings.load_default_exclude()
+        if value in ex.get(part, ()):
+            return False
+        ex.setdefault(part, set()).add(value)
+        settings.save_default_exclude(ex)
+        self._saved()
+        return True
+
+    def remove_default(self, part, value):
+        ex = settings.load_default_exclude()
+        ex.get(part, set()).discard(value)
+        settings.save_default_exclude(ex)
+        self._saved()
+
     def reset_filter(self):
         settings.reset_exclude()
         self._saved()
@@ -159,9 +179,25 @@ class SettingsStep(Step):
             row = tk.Frame(f, bg=theme.SHEET)
             row.pack(fill="x", pady=(s(6), 0))
             tk.Label(row, text=part, bg=theme.SHEET, fg=theme.INK, font=theme.font(10, "Semibold"), width=10,
-                     anchor="nw").pack(side="left", anchor="n")
-            tk.Label(row, text=", ".join(vals), bg=theme.SHEET, fg=theme.INK_SOFT, font=theme.mono(9),
-                     anchor="w", justify="left", wraplength=s(330)).pack(side="left", fill="x")
+                     anchor="nw").pack(side="left", anchor="n", pady=(s(3), 0))
+            grid = tk.Frame(row, bg=theme.SHEET)
+            grid.pack(side="left", fill="x")
+            for i, v in enumerate(vals):
+                self._value_chip(grid, part, v).grid(row=i // 6, column=i % 6, sticky="w", padx=(0, s(4)),
+                                                     pady=(0, s(4)))
+        add = tk.Frame(f, bg=theme.SHEET)
+        add.pack(fill="x", pady=(s(10), 0))
+        self.part_box = ttk.Combobox(add, values=list(riafilter.PARTS), state="readonly", style="Form.TCombobox",
+                                     font=theme.font(10), width=10)
+        self.part_box.set("Activity")
+        self.part_box.pack(side="left")
+        self.value_box = tk.Entry(add, bg=theme.SHEET, fg=theme.INK, insertbackground=theme.INK, relief="flat",
+                                  font=theme.mono(10), width=10, highlightthickness=1,
+                                  highlightbackground=theme.RULE_DARK, highlightcolor=theme.INK)
+        self.value_box.pack(side="left", padx=(s(6), 0), ipady=s(4))
+        self.value_box.bind("<Return>", lambda e: self._add_default_from_form())
+        ui.Button(add, "Add", self._add_default_from_form, kind="primary", pady=s(4)).pack(side="left",
+                                                                                           padx=(s(6), 0))
         btns = tk.Frame(f, bg=theme.SHEET)
         btns.pack(fill="x", pady=(s(14), 0))
         ui.Button(btns, "Edit default…", self.edit_default).pack(side="left")
@@ -240,6 +276,22 @@ class SettingsStep(Step):
         for w in (box, row, text) + tuple(text.winfo_children()):
             w.bind("<Button-1>", lambda e: self.toggle_rule(i))
             w.configure(cursor="hand2")
+
+    def _value_chip(self, parent, part, value):
+        s = self.ctx.s
+        chip = tk.Frame(parent, bg=theme.SHEET_HI, highlightthickness=1, highlightbackground=theme.RULE)
+        tk.Label(chip, text=value, bg=theme.SHEET_HI, fg=theme.INK_SOFT, font=theme.mono(9)).pack(
+            side="left", padx=(s(6), s(2)))
+        x = tk.Label(chip, text="✕", bg=theme.SHEET_HI, fg=theme.FAINT, font=theme.font(8), cursor="hand2")
+        x.pack(side="left", padx=(0, s(5)))
+        x.bind("<Button-1>", lambda e: self.remove_default(part, value))
+        x.bind("<Enter>", lambda e: x.config(fg=theme.RED))
+        x.bind("<Leave>", lambda e: x.config(fg=theme.FAINT))
+        return chip
+
+    def _add_default_from_form(self):
+        if self.add_default(self.part_box.get(), self.value_box.get()):
+            self.value_box.delete(0, "end")
 
     def _add_from_form(self):
         if self.add_rule(self.col_box.get(), self.op_box.get(), self.text_box.get()):

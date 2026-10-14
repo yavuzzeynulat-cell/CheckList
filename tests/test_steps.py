@@ -75,12 +75,44 @@ def test_reset_needs_two_clicks(tk_root, tmp_path):
     assert settings.load_rules()[0]["text"] == "Reinforcement"
 
 
+def test_default_filter_add_remove(tk_root, tmp_path):
+    sh = _shell(tk_root, tmp_path)
+    prefs = sh.steps[3]
+    settings.save_default_exclude({"Activity": {"REX"}})
+    assert prefs.add_default("Discipline", " qc ")            # buyuk harfe, bosluksuz
+    assert not prefs.add_default("Discipline", "QC")          # zaten var
+    assert not prefs.add_default("Discipline", "")
+    assert not prefs.add_default("Nope", "X")                 # oyle parca yok
+    assert settings.load_default_exclude() == {"Activity": {"REX"}, "Discipline": {"QC"}}
+    prefs.remove_default("Activity", "REX")
+    assert settings.load_default_exclude() == {"Discipline": {"QC"}}
+    settings.reset_exclude()
+    assert settings.load_exclude() == {"Discipline": {"QC"}}  # Reset bu secimi getirir
+
+
 def test_default_filter_dialog(tk_root, tmp_path):
     sh = _shell(tk_root, tmp_path)
     d = sh.steps[3].edit_default()
     d.set_all("Activity", True)
     d.save()
     assert settings.load_default_exclude() == {}
+
+
+def test_drop_still_accepted_after_window_fades_in(tk_root, tmp_path):
+    """Tk'nin -alpha ayari WS_EX_ACCEPTFILES'i siliyordu (olculdu 2026-10-14):
+    pencere solarak acildiktan sonra Windows birakilan dosyayi hic gondermiyordu."""
+    import ctypes
+    sh = _shell(tk_root, tmp_path)
+    sh.show()
+    for _ in range(40):                 # acilis animasyonu (~220 ms) bitsin
+        tk_root.update()
+        tk_root.after(15)
+    tk_root.update()
+    hook = sh.steps[0]._hook
+    assert hook is not None
+    u = ctypes.windll.user32
+    u.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+    assert u.GetWindowLongPtrW(ctypes.c_void_p(hook.hwnd), -20) & 0x10    # WS_EX_ACCEPTFILES
 
 
 def test_selftest():

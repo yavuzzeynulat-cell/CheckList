@@ -111,6 +111,11 @@ class Shell:
         self.root.attributes("-alpha", 0.0)
         self.root.deiconify()
         ui.caption(self.root)
-        ui.animate(self.root, 220, lambda k: self.root.attributes("-alpha", ui.ease(k)))
+        ui.animate(self.root, 220, lambda k: self.root.attributes("-alpha", ui.ease(k)), done=self._shown)
         self.root.lift()
         self.root.focus_force()
+
+    def _shown(self):
+        """Solma bitti: -alpha'nin sildigi pencere ayarlarini adimlar geri koysun."""
+        for st in self.steps:
+            st.window_shown()

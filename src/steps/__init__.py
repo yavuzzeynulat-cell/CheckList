@@ -19,6 +19,9 @@ class Step:
     def hide(self):
         """Baska adima gecilirken."""
 
+    def window_shown(self):
+        """Pencere solarak acildiktan sonra (bir kez)."""
+
     # ortak parcalar
     def page(self, title, sub):
         """Baslik + aciklama; altindaki icerik alani doner."""
