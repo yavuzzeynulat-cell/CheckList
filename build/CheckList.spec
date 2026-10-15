@@ -16,7 +16,8 @@ if os.path.exists(secret):
     datas.append((secret, "."))
 else:
     print("[UYARI] license_secret.txt yok - lisans kapisi KAPALI derlenecek.")
-for pkg in ("openpyxl", "PIL", "et_xmlfile"):
+# cryptography: lisans kapisi Ed25519 imzasini dogrular (2026-10-15); yoksa kapi herkesi reddeder.
+for pkg in ("openpyxl", "PIL", "et_xmlfile", "cryptography"):
     d, b, h = collect_all(pkg)
     datas += d
     binaries += b

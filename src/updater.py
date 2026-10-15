@@ -54,7 +54,7 @@ _UA = "CheckList-Updater"
 # Bu src/ en az hangi launcher surumuyle calisir. launcher.LAUNCHER_VERSION
 # artirildiginda (EXE'ye gomulu bir sey degisti) burada da artir: eski
 # EXE'li makineler kod yerine tam kurulumu alir.
-MIN_LAUNCHER = 1
+MIN_LAUNCHER = 2   # 2: Ed25519 lisans kapisi EXE icinde (2026-10-15)
 
 
 def required_launcher(notes: str) -> int:

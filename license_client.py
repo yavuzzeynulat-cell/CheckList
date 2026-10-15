@@ -66,6 +66,13 @@ def _load_secret(default: str) -> str:
 
 PROGRAM_ID = "checklist"
 SECRET = _load_secret(UNCONFIGURED_SECRET)
+
+# Sunucunun ACIK anahtari (Ed25519, ham 32 bayt, base64). Ozel anahtar yalniz
+# sunucuda (wrangler secret LICENSE_SIGNING_KEY). Doluysa kapi YALNIZ bu imzaya
+# guvenir: SECRET kurulum klasorunde duz dosya; silinince kapi kapaniyor,
+# okununca sahte sunucu "active" imzalayabiliyordu (tarama 2026-10-15).
+# SECRET artik yalniz hata raporlarini imzalar.
+PUBLIC_KEY = "hPC/SRZ/VQ/INdyJvD2EP0hnY89pd1DUtb+TMF53qVE="
 SERVER_URL = os.environ.get(
     "LICENSE_SERVER_URL", "https://license-panel.yavuzzeynulat.workers.dev")
 
@@ -157,6 +164,20 @@ def verify_signature(secret: str, parts, signature) -> bool:
     if not isinstance(signature, str):
         return False
     return hmac.compare_digest(make_signature(secret, parts), signature)
+
+
+def verify_ed25519(public_b64: str, parts, signature) -> bool:
+    """Sunucunun Ed25519 imzasi. Hata/eksik paket = gecersiz (guvenli taraf)."""
+    if not isinstance(signature, str) or len(signature) != 128:
+        return False
+    try:
+        import base64
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        key = Ed25519PublicKey.from_public_bytes(base64.b64decode(public_b64))
+        key.verify(bytes.fromhex(signature), "|".join(str(p) for p in parts).encode("utf-8"))
+        return True
+    except Exception:
+        return False
 
 
 # =============================================================== kararlar (saf)
@@ -324,7 +345,11 @@ def ask_server(version, user_name, machine, nonce):
         update.get("version", "") if update else "",
         update.get("sha256", "") if update else "",
     ]
-    if not verify_signature(SECRET, parts, payload.get("signature")):
+    if PUBLIC_KEY:
+        ok = verify_ed25519(PUBLIC_KEY, parts, payload.get("signature_ed25519"))
+    else:
+        ok = verify_signature(SECRET, parts, payload.get("signature"))
+    if not ok:
         raise LicenseTrustError("signature mismatch")
     return payload
 
@@ -421,7 +446,7 @@ def is_configured() -> bool:
     sunucuya sorup hiç açılmaz. Çalışan bir programı kurulum tamamlanmadan
     kilitlememek için bu kontrol var. SECRET doldurulduğu an kapı normal çalışır.
     """
-    return bool(SECRET) and SECRET != UNCONFIGURED_SECRET
+    return bool(PUBLIC_KEY) or (bool(SECRET) and SECRET != UNCONFIGURED_SECRET)
 
 
 def require(version: str = "", show=None) -> None:
