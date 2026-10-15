@@ -139,6 +139,7 @@ def test_update_version_comparison_is_numeric():
 
 def test_is_configured_false_with_placeholder_secret(monkeypatch):
     monkeypatch.setattr(lc, "SECRET", lc.UNCONFIGURED_SECRET)
+    monkeypatch.setattr(lc, "PUBLIC_KEY", "")
     assert lc.is_configured() is False
 
 
@@ -154,6 +155,7 @@ def test_require_does_nothing_when_not_configured(monkeypatch):
     bir programı kurulum tamamlanmadan kilitlememeliyiz.
     """
     monkeypatch.setattr(lc, "SECRET", lc.UNCONFIGURED_SECRET)
+    monkeypatch.setattr(lc, "PUBLIC_KEY", "")
     asked = []
     monkeypatch.setattr(lc, "ask_server", lambda *a, **k: asked.append(1))
     monkeypatch.setattr(lc, "read_user_name", lambda: "")
@@ -212,16 +214,31 @@ def server(monkeypatch):
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     monkeypatch.setattr(lc, "SERVER_URL", f"http://127.0.0.1:{srv.server_port}")
     monkeypatch.setattr(lc, "SECRET", "test-secret")
+    monkeypatch.setattr(lc, "PUBLIC_KEY", _TEST_PUB)
     yield _Handler
     srv.shutdown()
     srv.server_close()
+
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402
+from cryptography.hazmat.primitives import serialization as _ser  # noqa: E402
+
+_TEST_KEY = Ed25519PrivateKey.generate()
+_TEST_PUB = __import__("base64").b64encode(
+    _TEST_KEY.public_key().public_bytes(_ser.Encoding.Raw, _ser.PublicFormat.Raw)).decode()
+
+
+def _ed(parts, key=_TEST_KEY):
+    return key.sign("|".join(str(p) for p in parts).encode("utf-8")).hex()
 
 
 def _reply(status, machine, nonce="fixed", expires="", update=None):
     """Sunucunun üreteceği cevabı ve imzayı birebir taklit eder."""
     uver = update["version"] if update else ""
     usha = update["sha256"] if update else ""
+    parts = [lc.PROGRAM_ID, machine, status, expires, nonce, uver, usha]
     return {
+        "signature_ed25519": _ed(parts),
         "status": status,
         "expires_at": expires or None,
         "days_left": 30,
@@ -497,3 +514,37 @@ def test_name_prompt_comes_to_front(monkeypatch):
     monkeypatch.setattr(simpledialog, "askstring", fake)
     assert lc.ask_user_name() == "Test User"
     assert seen["topmost"] is True
+
+
+# ======================================================= Ed25519 (2026-10-15)
+
+def test_shipped_public_key_is_set():
+    assert lc.PUBLIC_KEY and lc.is_configured()
+
+
+def test_gate_stays_closed_when_secret_file_is_deleted(server, named, monkeypatch):
+    """Kurulum klasorundeki license_secret.txt silinince kapi ACILIYORDU."""
+    monkeypatch.setattr(lc, "SECRET", lc.UNCONFIGURED_SECRET)
+    assert lc.is_configured()
+    server.reply = _reply("pending", lc.machine_id())
+    with pytest.raises(SystemExit):
+        lc.require(version="0.2.0", show=_Recorder())
+
+
+def test_reply_forged_with_leaked_secret_is_rejected(server, named):
+    """SECRET okunup sahte sunucu kurulursa: HMAC dogru ama Ed25519 yok/yanlis."""
+    good = _reply("active", lc.machine_id())
+    for forged in ({k: v for k, v in good.items() if k != "signature_ed25519"},
+                   {**good, "signature_ed25519": _ed(["x"], Ed25519PrivateKey.generate())}):
+        server.reply = forged
+        show = _Recorder()
+        with pytest.raises(SystemExit):
+            lc.require(version="0.2.0", show=show)
+        assert "verif" in show.calls[0][2].lower()
+
+
+def test_ed25519_matches_server_format():
+    parts = ["handover", "M", "active", "", "n", "", ""]
+    assert lc.verify_ed25519(_TEST_PUB, parts, _ed(parts))
+    assert not lc.verify_ed25519(_TEST_PUB, parts[:-1] + ["x"], _ed(parts))
+    assert not lc.verify_ed25519(_TEST_PUB, parts, "zz" * 64)

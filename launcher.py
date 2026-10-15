@@ -27,10 +27,11 @@ import PIL.ImageFilter  # noqa: F401
 import PIL.ImageGrab  # noqa: F401
 import PIL.ImageTk  # noqa: F401
 import openpyxl  # noqa: F401
+import cryptography.hazmat.primitives.asymmetric.ed25519  # noqa: F401  (lisans imzasi)
 
 import license_client
 
-LAUNCHER_VERSION = 1
+LAUNCHER_VERSION = 2   # 2: Ed25519 lisans kapisi (cryptography EXE icinde)
 
 
 def _app_dir():
