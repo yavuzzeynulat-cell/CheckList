@@ -18,7 +18,8 @@ def test_two_sheets_full_rows(tmp_path):
     c = [detect.read(xlsx(tmp_path / "c.xlsx", CHECK_HEADER, [check("CHL-1", A)]))]
     p = output.write(compare.run(r, c), tmp_path / "out" / "CheckList Result.xlsx")
     wb = openpyxl.load_workbook(p)
-    assert wb.sheetnames == [output.SUMMARY_SHEET, output.MATCHED_SHEET, output.MISSING_SHEET]
+    assert wb.sheetnames == [output.SUMMARY_SHEET, output.MATCHED_SHEET, output.MISSING_SHEET,
+                            output.CHART_DATA_SHEET]
     m, x = wb[output.MATCHED_SHEET], wb[output.MISSING_SHEET]
     assert [c.value for c in m[1]] == RIA_HEADER + CHECK_HEADER
     assert m.cell(2, 2).value == A and m.cell(2, len(RIA_HEADER) + 1).value == "CHL-1"
@@ -39,11 +40,31 @@ def test_summary_sheet_by_department(tmp_path):
     wb = openpyxl.load_workbook(p)
     assert wb.sheetnames[0] == output.SUMMARY_SHEET
     ws = wb[output.SUMMARY_SHEET]
-    table = [[x.value for x in row] for row in ws.iter_rows(min_row=1, max_col=3)]
-    assert table[0] == ["Department", "Has Checklist", "Missing Checklist"]
-    end = next(i for i, r in enumerate(table) if r[0] == "Total")
-    assert table[1:end + 1] == [["ST-Structures", 1, 1], ["DR-Drainage", 1, 0], ["Total", 2, 1]]
-    assert len(ws._charts) == 1 and ws._charts[0].tagname == "pieChart"
+    cells = {c.value: c for row in ws.iter_rows() for c in row if c.value is not None}
+    # buyuk sayilar: etiketin bir alt satirinda
+    assert ws.cell(cells["■  CHECKLIST CREATED"].row + 1, 7).value == 2
+    assert ws.cell(cells["■  MISSING CHECKLIST"].row + 1, 7).value == 1
+    assert ws.cell(cells["TOTAL RIA"].row + 1, 7).value == 3
+    assert cells["COVERAGE"].row > 0 and ws.cell(cells["COVERAGE"].row - 2, 2).value == 2 / 3
+    assert "Project 26437" in next(v for v in cells if isinstance(v, str) and v.startswith("Project"))
+    h = cells["Department"].row
+    table = [[ws.cell(r, c).value for c in (2, 4, 5, 7)] for r in range(h, h + 3)]
+    assert table == [["Department", "Created", "Missing", "Coverage"], ["ST-Structures", 1, 1, 0.5],
+                     ["DR-Drainage", 1, 0, 1.0]]
+    assert ws.cell(h + 3, 2).value is None
+    assert len(ws._charts) == 1 and ws._charts[0].tagname == "doughnutChart"
+    # pasta verisi gizli sayfada: Excel gizli hucreyi cizmesin derse pasta bos cikar
+    assert wb[output.CHART_DATA_SHEET].sheet_state == "hidden" and ws._charts[0].visible_cells_only is False
+    assert ws.max_column <= 10   # J'den sagda bir sey yok: yazdirinca ikinci sayfa olmaz
+    assert int(ws.page_setup.paperSize) == int(ws.PAPERSIZE_A4) and ws.sheet_properties.pageSetUpPr.fitToPage
+
+
+def test_summary_empty_result(tmp_path):
+    # hic RIA yok: sifira bolme olmadan yazilir
+    p = output.write(compare.run([], []), tmp_path / "o.xlsx")
+    ws = openpyxl.load_workbook(p)[output.SUMMARY_SHEET]
+    cells = {c.value: c for row in ws.iter_rows() for c in row if c.value is not None}
+    assert ws.cell(cells["TOTAL RIA"].row + 1, 7).value == 0
 
 
 def test_unique_path(tmp_path):

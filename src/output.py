@@ -1,7 +1,7 @@
 """Sonuc Excel'i (GUI'siz): ozet + iki sayfa, satirlar tum sutunlariyla.
 
-'Summary' (ilk sayfa, kullanici 2026-10-14): departman basina yesil (checklist'i
-olan RIA) / kirmizi (eksik RIA) sayisi + toplamin yuzde pastasi.
+'Summary' (ilk sayfa; mailde ekran goruntusu olarak gider): toplamin halka
+pastasi, buyuk sayilar, departman basina olan / eksik / yuzde.
 'Has Checklist': RIA'nin butun sutunlari + yaninda checklist'in butun
 sutunlari; bir RIA'nin birden fazla checklist'i varsa her biri ayri satir.
 'Missing Checklist': checklist'i olmayan RIA'lar, butun sutunlari.
@@ -19,6 +19,8 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 SUMMARY_SHEET = "Summary"
+CHART_DATA_SHEET = "Chart Data"
+SCALE = 0.88   # Summary'nin tum olculeri: %100 olcekte tek A4 dikeye sigar (526pt -> 463pt, yazilabilir 487pt; olculdu)
 DEPARTMENT_COLUMN = "Department Codes"
 NO_DEPARTMENT = "(no department)"
 GREEN = "2B8A3E"
@@ -114,6 +116,8 @@ def summary_rows(result):
     """[(departman, yesil, kirmizi)], cok RIA'li departman once. Yesil RIA sayar,
     checklist satiri degil (bir RIA'nin iki checklist'i bir kez sayilir)."""
     h = result.ria_header
+    if "Document Number" not in h:
+        return []
     d = h.index(DEPARTMENT_COLUMN) if DEPARTMENT_COLUMN in h else None
     n = h.index("Document Number")
 
@@ -133,62 +137,165 @@ def summary_rows(result):
     return [(k, green.get(k, 0), red.get(k, 0)) for k in names]
 
 
+def _project(result):
+    """Karsilastirilan RIA'larin tek ortak proje kodu (Document Number'in ilk parcasi); yoksa None."""
+    import riafilter
+    h = result.ria_header
+    if "Document Number" not in h:
+        return None
+    n = h.index("Document Number")
+    found = {riafilter.parts(r[n])[0] for r in [r for r, _ in result.matched] + list(result.missing)}
+    return found.pop() if len(found) == 1 and riafilter.OTHER not in found else None
+
+
+def _version():
+    try:
+        return (Path(__file__).parent / "version.txt").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
 def _summary(ws, result):
-    from openpyxl.chart import PieChart, Reference
+    """Mailde ekran goruntusu olarak giden sayfa (kullanici 2026-10-22): solda
+    halka pasta, sagda uc buyuk sayi, altta departman tablosu.
+    Altin oran: pasta alani / sag sutun ~ 1.618, pasta yuksekligi / tablo ~ 1.618,
+    halka ici / disi = 0.62 (Excel'de olculdu)."""
+    from openpyxl.chart import DoughnutChart, Reference
     from openpyxl.chart.label import DataLabelList
+    from openpyxl.chart.layout import Layout, ManualLayout
     from openpyxl.chart.series import DataPoint
-    ws.sheet_properties.tabColor = "1D2420"
-    thin = Side(style="thin", color="BFBFBF")
+    from openpyxl.chart.shapes import GraphicalProperties
+    from openpyxl.chart.text import RichText
+    from openpyxl.drawing.text import CharacterProperties, Paragraph, ParagraphProperties
+    from openpyxl.formatting.rule import DataBarRule
+
+    ink, muted = "1D2420", "6B7280"
+
+    def k(v):
+        return round(v * SCALE, 2)
+
+    def font(sz=10, b=False, c=ink):
+        return Font(name="Segoe UI", size=round(sz * SCALE * 2) / 2, bold=b, color=c)
+    thin = Side(style="thin", color="D9DDE1")
     rows = summary_rows(result)
-    ws.append(["Department", "Has Checklist", "Missing Checklist"])
-    for j, fill in enumerate(("D9D9D9", "E2EFDA", "F8D7D7"), 1):
-        c = ws.cell(1, j)
-        c.font = Font(bold=True, color={2: GREEN, 3: RED}.get(j, "000000"))
-        c.fill = PatternFill("solid", fgColor=fill)
-        c.border = Border(bottom=thin)
-    for r in rows:
-        ws.append(list(r))
-    ws.append(["Total", sum(r[1] for r in rows), sum(r[2] for r in rows)])
-    total = ws.max_row
-    for j in (1, 2, 3):
-        ws.cell(total, j).font = Font(bold=True)
-        ws.cell(total, j).border = Border(top=thin)
-    for r in range(2, total):
-        ws.cell(r, 2).font = Font(color=GREEN)
-        ws.cell(r, 3).font = Font(color=RED)
-    ws.column_dimensions["A"].width = max(14, min(MAX_WIDTH, max((len(r[0]) for r in rows), default=10) + 2))
-    ws.column_dimensions["B"].width = ws.column_dimensions["C"].width = 18
-    ws.freeze_panes = "A2"
-    # pasta: Total satiri (yesil / kirmizi), dilim adlari baslik satirindan
-    pie = PieChart()
-    pie.title = "Checklist coverage"
-    pie.add_data(Reference(ws, min_col=1, max_col=3, min_row=total, max_row=total), from_rows=True,
-                 titles_from_data=True)
-    pie.set_categories(Reference(ws, min_col=2, max_col=3, min_row=1, max_row=1))
+    has, miss = sum(r[1] for r in rows), sum(r[2] for r in rows)
+    tot = has + miss
+    ws.sheet_properties.tabColor = ink
+    ws.sheet_view.showGridLines = False
+    for col, w in zip("ABCDEFGHIJ", (2, 14, 14, 14, 14, 3, 12, 14, 8.5, 2)):
+        ws.column_dimensions[col].width = k(w)
+
+    ws["B2"] = "Checklist Coverage"
+    ws["B2"].font = font(20, True)
+    project = _project(result)
+    ws["B3"] = "  ·  ".join(([f"Project {project}"] if project else []) + [f"{dt.date.today():%d %b %Y}"])
+    ws["B3"].font = font(10, c=muted)
+    for c in range(2, 10):
+        ws.cell(4, c).border = Border(bottom=Side(style="medium", color=ink))
+
+    # Grafik 5. satirdan baslar, 6-18 esit: yuzde yazisi (seffaf grafigin
+    # arkasindaki hucrede) halka merkezine oturur (olculdu, sapma 2px).
+    ws.row_dimensions[5].height = k(8.3)
+    for r in range(6, 19):
+        ws.row_dimensions[r].height = k(19.55)
+    ws.merge_cells("B11:E12")
+    ws["B11"] = has / tot if tot else 0
+    ws["B11"].number_format = "0%"
+    ws["B11"].font = font(36, True, GREEN)
+    ws["B11"].alignment = Alignment(horizontal="center", vertical="bottom")
+    ws.merge_cells("B13:E13")
+    ws["B13"] = "COVERAGE"
+    ws["B13"].font = font(9, True, muted)
+    ws["B13"].alignment = Alignment(horizontal="center", vertical="top")
+
+    # pasta verisi ayri gizli sayfada: Summary'de sagda durunca yazdirmada
+    # ikinci sayfaya tasiyordu (kullanici 2026-10-22)
+    data = ws.parent.create_sheet(CHART_DATA_SHEET)
+    data.sheet_state = "hidden"
+    data.append(["Checklist Created", "Missing Checklist"])
+    data.append([has, miss])
+    pie = DoughnutChart(holeSize=62, firstSliceAng=0)
+    pie.add_data(Reference(data, min_col=1, max_col=2, min_row=2, max_row=2), from_rows=True)
+    pie.set_categories(Reference(data, min_col=1, max_col=2, min_row=1, max_row=1))
     s = pie.series[0]
     for i, color in enumerate((GREEN, RED)):
         pt = DataPoint(idx=i)
         pt.graphicalProperties.solidFill = color
         pt.graphicalProperties.line.solidFill = "FFFFFF"
+        pt.graphicalProperties.line.width = 38100
         s.dPt.append(pt)
-    from openpyxl.chart.text import RichText
-    from openpyxl.drawing.text import CharacterProperties, Paragraph, ParagraphProperties
     s.dLbls = DataLabelList()
-    s.dLbls.showPercent = True
-    s.dLbls.showVal = s.dLbls.showCatName = s.dLbls.showSerName = False
+    s.dLbls.showVal = True
+    s.dLbls.showPercent = s.dLbls.showCatName = s.dLbls.showSerName = False
     s.dLbls.showLegendKey = s.dLbls.showLeaderLines = False
-    s.dLbls.position = "ctr"
-    white = CharacterProperties(sz=1400, b=True, solidFill="FFFFFF")
+    white = CharacterProperties(sz=int(1400 * SCALE), b=True, solidFill="FFFFFF")
     s.dLbls.txPr = RichText(p=[Paragraph(pPr=ParagraphProperties(defRPr=white), endParaRPr=white)])
-    pie.legend.position = "b"
-    pie.legend.overlay = False
-    pie.height, pie.width = 10, 12
-    # Baslik grafigin icinde pastanin ustune biniyordu (Excel'de olculdu; elle
-    # yerlesim yok sayildi): hucrede, grafigin hemen ustunde.
-    ws.cell(total + 2, 1, pie.title.tx.rich.p[0].r[0].t).font = Font(bold=True, size=12)
-    pie.title = None
-    # tablonun altina: yazdirinca tek sayfa (yanina konunca ikiye bolunuyordu, olculdu)
-    ws.add_chart(pie, f"A{total + 3}")
+    pie.legend = pie.title = None
+    pie.visible_cells_only = False   # veri gizli sayfada; yoksa Excel pastayi hic cizmez (olculdu)
+    pie.graphical_properties = GraphicalProperties(noFill=True)
+    pie.graphical_properties.line.noFill = True
+    pie.plot_area.graphicalProperties = GraphicalProperties(noFill=True)
+    pie.plot_area.layout = Layout(manualLayout=ManualLayout(x=0.03, y=0.03, w=0.94, h=0.94))
+    pie.height, pie.width = k(8.97), k(10.67)
+    ws.add_chart(pie, "B5")
+
+    def stat(r, label, val, color, sub):
+        ws.merge_cells(start_row=r, start_column=7, end_row=r, end_column=9)
+        ws.cell(r, 7, label).font = font(9, True, muted if color == ink else color)
+        ws.cell(r, 7).alignment = Alignment(vertical="bottom")
+        ws.merge_cells(start_row=r + 1, start_column=7, end_row=r + 2, end_column=7)
+        ws.merge_cells(start_row=r + 1, start_column=8, end_row=r + 2, end_column=9)
+        ws.cell(r + 1, 7, val).font = font(24, True, color)
+        ws.cell(r + 1, 7).alignment = Alignment(horizontal="left", vertical="center")
+        ws.cell(r + 1, 8, sub).font = font(10, c=muted)
+        ws.cell(r + 1, 8).alignment = Alignment(vertical="center")
+    stat(7, "■  CHECKLIST CREATED", has, GREEN, f"{has / tot:.0%} of RIAs" if tot else "")
+    stat(11, "■  MISSING CHECKLIST", miss, RED, f"{miss / tot:.0%} of RIAs" if tot else "")
+    stat(15, "TOTAL RIA", tot, ink, "compared")
+
+    r0 = 20
+    ws.row_dimensions[r0 - 1].height = k(14)
+    ws.row_dimensions[r0].height = k(24)
+    ws.cell(r0, 2, "By department").font = font(12, True)
+    ws.cell(r0, 2).alignment = Alignment(vertical="center")
+    heads = {2: "Department", 4: "Created", 5: "Missing", 7: "Coverage"}
+    for c in range(2, 10):
+        cell = ws.cell(r0 + 1, c, heads.get(c))
+        cell.font = font(9, True, muted)
+        cell.border = Border(bottom=Side(style="thin", color=ink))
+        cell.alignment = Alignment(horizontal="right" if c in (4, 5) else "left")
+    for i, (name, g, m) in enumerate(rows, 1):
+        r = r0 + 1 + i
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=3)
+        ws.merge_cells(start_row=r, start_column=7, end_row=r, end_column=9)
+        ws.cell(r, 2, name).font = font(10, True)
+        ws.cell(r, 2).alignment = Alignment(shrink_to_fit=True)
+        ws.cell(r, 4, g).font = font(10, c=GREEN)
+        ws.cell(r, 5, m).font = font(10, c=RED)
+        for c in (4, 5):
+            ws.cell(r, c).alignment = Alignment(horizontal="right")
+        ws.cell(r, 7, g / (g + m)).number_format = "0%"
+        ws.cell(r, 7).font = font(10, True)
+        for c in range(2, 10):
+            ws.cell(r, c).border = Border(bottom=thin)
+        ws.row_dimensions[r].height = k(20)
+    if rows:
+        ws.conditional_formatting.add(f"G{r0 + 2}:G{r0 + 1 + len(rows)}", DataBarRule(
+            start_type="num", start_value=0, end_type="num", end_value=1, color="8CC99B", showValue=True))
+    rf = r0 + len(rows) + 3
+    ws.row_dimensions[rf - 1].height = k(10)
+    notes = [f"Excluded by filter: {sum(result.removed.values())} RIAs",
+             f"Rejected checklists ignored: {result.rejected}"]
+    if _version():
+        notes.append(f"CheckList v{_version()}")
+    ws.cell(rf, 2, "  ·  ".join(notes)).font = font(8, c=muted)
+    # tek A4 dikey (kullanici 2026-10-22); departman cogalip sigmazsa Excel kucultur
+    ws.print_area = f"A1:J{rf}"
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.page_setup.orientation = "portrait"
+    ws.print_options.horizontalCentered = True
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.fitToWidth = ws.page_setup.fitToHeight = 1
 
 
 def write(result, out_path):
