@@ -27,6 +27,9 @@ GREEN = "2B8A3E"
 RED = "C92A2A"
 MATCHED_SHEET = "Has Checklist"
 MISSING_SHEET = "Missing Checklist"
+MULTI_SHEET = "More Than One Checklist"
+MULTI_TAB = "F2C94C"
+MULTI_FILL = "FFF2CC"
 FILE_NAME = "CheckList Result.xlsx"
 RIA_FILL = "DDEBF7"          # RIA sutunlarinin basligi
 CHECK_FILL = "E2EFDA"        # checklist sutunlarinin basligi
@@ -148,14 +151,7 @@ def _project(result):
     return found.pop() if len(found) == 1 and riafilter.OTHER not in found else None
 
 
-def _version():
-    try:
-        return (Path(__file__).parent / "version.txt").read_text(encoding="utf-8").strip()
-    except OSError:
-        return ""
-
-
-def _summary(ws, result):
+def _summary(ws, result, multi=0):
     """Mailde ekran goruntusu olarak giden sayfa (kullanici 2026-10-22): solda
     halka pasta, sagda uc buyuk sayi, altta departman tablosu.
     Altin oran: pasta alani / sag sutun ~ 1.618, pasta yuksekligi / tablo ~ 1.618,
@@ -282,13 +278,13 @@ def _summary(ws, result):
     if rows:
         ws.conditional_formatting.add(f"G{r0 + 2}:G{r0 + 1 + len(rows)}", DataBarRule(
             start_type="num", start_value=0, end_type="num", end_value=1, color="8CC99B", showValue=True))
-    rf = r0 + len(rows) + 3
-    ws.row_dimensions[rf - 1].height = k(10)
-    notes = [f"Excluded by filter: {sum(result.removed.values())} RIAs",
-             f"Rejected checklists ignored: {result.rejected}"]
-    if _version():
-        notes.append(f"CheckList v{_version()}")
-    ws.cell(rf, 2, "  ·  ".join(notes)).font = font(8, c=muted)
+    # Alt bilgi satiri (filtre/rejected/surum) yok; coklu checklist notu tablodan
+    # uzakta: ekran goruntusu tablonun altindan kesilince girmesin (kullanici 2026-10-22).
+    rf = r0 + len(rows) + 1
+    if multi:
+        rf += 4
+        ws.cell(rf, 2, f"{multi} RIA{' has' if multi == 1 else 's have'} more than one checklist: "
+                       f"see '{MULTI_SHEET}'").font = font(8, True, ink)
     # tek A4 dikey (kullanici 2026-10-22); departman cogalip sigmazsa Excel kucultur
     ws.print_area = f"A1:J{rf}"
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
@@ -296,6 +292,60 @@ def _summary(ws, result):
     ws.print_options.horizontalCentered = True
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.page_setup.fitToWidth = ws.page_setup.fitToHeight = 1
+
+
+def multi_rows(result):
+    """Birden fazla checklist'i olan RIA'lar: [(no, baslik, departman, adet, 'CHL-1, CHL-2')].
+    Has Checklist'te her checklist ayri satir; 39 RIA / 42 satir farkini
+    kullanici elle aradi (2026-10-22)."""
+    rh, ch = result.ria_header, result.check_header
+    if "Document Number" not in rh:
+        return []
+    n = rh.index("Document Number")
+    title = rh.index("Document Title") if "Document Title" in rh else None
+    dept = rh.index(DEPARTMENT_COLUMN) if DEPARTMENT_COLUMN in rh else None
+    task = ch.index("Task Number") if "Task Number" in ch else None
+    by = {}
+    for r, c in result.matched:
+        by.setdefault(str(r[n]).strip().upper(), (r, []))[1].append(c)
+    out = []
+    for r, cs in by.values():
+        if len(cs) > 1:
+            nums = ", ".join(str(c[task]) for c in cs if task is not None and c[task] not in (None, ""))
+            out.append((r[n], r[title] if title is not None else None, r[dept] if dept is not None else None,
+                        len(cs), nums))
+    return out
+
+
+def _multi(ws, result, rows):
+    ws.sheet_properties.tabColor = MULTI_TAB
+    ws["A1"] = "These RIAs have more than one checklist"
+    ws["A1"].font = Font(bold=True, size=14)
+    if rows:
+        extra = sum(r[3] for r in rows) - len(rows)
+        ws["A2"] = (f"{result.with_checklist} RIAs have a checklist, but there are {len(result.matched)} "
+                    f"checklist rows: the {len(rows)} RIAs below have more than one checklist (+{extra} rows).")
+        ws["A3"] = "In 'Has Checklist' each checklist is its own row, so these RIAs appear there more than once."
+    else:
+        ws["A2"] = "No RIA has more than one checklist."
+    for c in ("A2", "A3"):
+        ws[c].font = Font(color="555555")
+    head = ["RIA Number", "RIA Title", "Department", "Checklist Count", "Checklist Numbers"]
+    thin = Side(style="thin", color="BFBFBF")
+    for j, h in enumerate(head, 1):
+        c = ws.cell(5, j, h)
+        c.font = Font(bold=True)
+        c.fill = PatternFill("solid", fgColor=MULTI_FILL)
+        c.border = Border(bottom=thin)
+    for i, r in enumerate(rows, 6):
+        for j, v in enumerate(r, 1):
+            ws.cell(i, j, v)
+        ws.cell(i, 4).font = Font(bold=True)
+        ws.cell(i, 4).alignment = Alignment(horizontal="center")
+    for col, w in zip("ABCDE", (32, 70, 16, 16, 28)):
+        ws.column_dimensions[col].width = w
+    ws.freeze_panes = "A6"
+    ws.auto_filter.ref = f"A5:E{5 + max(1, len(rows))}"
 
 
 def write(result, out_path):
@@ -306,8 +356,10 @@ def write(result, out_path):
     rh, ch = result.ria_header, result.check_header
     _sheet(ws, rh + ch, [RIA_FILL] * len(rh) + [CHECK_FILL] * len(ch),
            [list(r) + list(c) for r, c in result.matched], MATCHED_TAB)
+    multi = multi_rows(result)
+    _multi(wb.create_sheet(MULTI_SHEET), result, multi)
     _sheet(wb.create_sheet(MISSING_SHEET), rh, [RIA_FILL] * len(rh), [list(r) for r in result.missing], MISSING_TAB)
-    _summary(wb.create_sheet(SUMMARY_SHEET, 0), result)
+    _summary(wb.create_sheet(SUMMARY_SHEET, 0), result, len(multi))
     wb.active = 0
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(suffix=".xlsx", dir=out_path.parent)
