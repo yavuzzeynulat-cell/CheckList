@@ -57,4 +57,5 @@ def all_steps():
     from steps.filter import FilterStep
     from steps.prefs import SettingsStep
     from steps.result import ResultStep
-    return [FilesStep(), FilterStep(), ResultStep(), SettingsStep()]
+    from steps.daily import DailyStep
+    return [FilesStep(), FilterStep(), ResultStep(), SettingsStep(), DailyStep()]

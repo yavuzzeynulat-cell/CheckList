@@ -71,6 +71,21 @@ def save_exclude(exclude):
     _set("exclude", {k: sorted(v) for k, v in exclude.items() if v})
 
 
+def load_daily_exclude():
+    """Daily RIAs sekmesinin kendi secimi. Ilk kez: Filter adiminin o anki seciminin
+    kopyasi alinir ve hemen kaydedilir -- sonra ikisi birbirini etkilemez."""
+    raw = _read()
+    if "daily_exclude" not in raw:
+        first = load_exclude()
+        save_daily_exclude(first)
+        return first
+    return _as_exclude(raw["daily_exclude"])
+
+
+def save_daily_exclude(exclude):
+    _set("daily_exclude", {k: sorted(v) for k, v in exclude.items() if v})
+
+
 def reset_exclude():
     save_exclude(load_default_exclude())
 

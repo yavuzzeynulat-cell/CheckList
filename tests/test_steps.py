@@ -117,3 +117,23 @@ def test_drop_still_accepted_after_window_fades_in(tk_root, tmp_path):
 
 def test_selftest():
     assert main.selftest() == 0
+
+
+def test_daily_rias_filter_is_remembered_apart_from_filter_step(tk_root, tmp_path):
+    settings.save_exclude({"Activity": {"GEM"}})
+    sh = _shell(tk_root, tmp_path)
+    daily = next(st for st in sh.steps if st.key == "daily")
+    daily.opener = lambda p: None
+    daily.add([xlsx(tmp_path / "r.xlsx", RIA_HEADER, [ria(A), ria(B), ria(C)])], wait=True)
+    sh.select("daily")
+    assert daily.exclude == {"Activity": {"GEM"}}          # ilk kez: Filter'in secimi kopyalanir
+    daily.toggle("Discipline", "QC")
+    assert [r[1] for r in daily.rows] == [B, C]
+    assert settings.load_daily_exclude() == {"Activity": {"GEM"}, "Discipline": {"QC"}}
+    assert settings.load_exclude() == {"Activity": {"GEM"}}   # Filter etkilenmez
+    settings.save_exclude({})                                 # Filter'da degisiklik ...
+    sh.select("files")
+    sh.select("daily")
+    assert daily.exclude == {"Activity": {"GEM"}, "Discipline": {"QC"}}   # ... Daily'yi etkilemez
+    daily.create()
+    assert daily.out_path.name.startswith("Daily RIAs ") and daily.out_path.exists()

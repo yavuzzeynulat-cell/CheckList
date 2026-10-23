@@ -81,6 +81,9 @@ class FilesStep(Step):
     def _poll(self):
         try:
             for paths in self._hook.drain():
+                if getattr(self.ctx, "drop_to", None):     # Daily RIAs acikken dosya orada kalir
+                    self.ctx.drop_to(paths)
+                    continue
                 self.ctx.go(self.key)
                 self.add(paths)
             self.ctx.root.after(150, self._poll)

@@ -14,6 +14,12 @@ aynı lisans kapısı, aynı otomatik güncelleme, aynı RIA filtresi; arayüz f
    - `Has Checklist`: RIA'nın tüm sütunları + checklist'in tüm sütunları (her checklist ayrı satır)
    - `Missing Checklist`: checklist'i olmayan RIA'lar, tüm sütunları
 
+## Daily RIAs (ayrı sekme, sağda)
+Günün RIA listesini (aralık EDMS'te girilip indirilir) tik kutulu, yazdırılabilir tabloya çevirir:
+`Desktop\CheckList\<tarih>\Daily RIAs <tarih>.xlsx`. Sütunlar ☐ · Department · RIA No · Title · When;
+departman RIA numarasının 4. parçasından, departmanlar bir arada, içleri zamana göre.
+Parça filtresi Filter'dakiyle aynı ama seçimi ayrı saklanır; Settings kuralları ortak.
+
 Eşleşme: `Document Number` = `Related RIA` (boşluk ve büyük/küçük harf önemsiz).
 Checklist durumu (OPEN/CLOSED/REJECTED) şimdilik bakılmıyor.
 
