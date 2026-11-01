@@ -25,6 +25,8 @@ sys.path.insert(0, ROOT)
 import updater  # noqa: E402
 
 RELEASE_REPO = f"{updater.GITHUB_OWNER}/{updater.GITHUB_REPO}"
+VENV_PY = os.path.join(ROOT, "build", "venv", "Scripts", "python.exe")
+TARAYICI = os.path.join(os.path.expanduser("~"), ".claude", "tools", "tedarik")  # pip-audit (projeden ayri)
 
 EXE_EMBEDDED = ("launcher.py", "license_client.py", "license_secret.txt",
                 "requirements.txt", "build/CheckList.spec", "build/installer.iss")
@@ -117,10 +119,33 @@ def find_iscc():
     return ""
 
 
+def temiz_ortam():
+    """Tedarik zinciri: build/venv'e yalniz kilitteki surum + parmak iziyle kur (alt paketler dahil),
+    sonra testler ve bilinen acik taramasi. Biri paketi degistirirse ya da acik varsa yayin durur."""
+    req = os.path.join(ROOT, "requirements.txt")
+    if not os.path.isfile(VENV_PY) and _run([sys.executable, "-m", "venv", os.path.join(ROOT, "build", "venv")]).returncode:
+        return "build/venv kurulamadi."
+    if _run([VENV_PY, "-m", "pip", "install", "-q", "--require-hashes", "--no-deps", "-r", req]).returncode:
+        return "Kilitli kurulum basarisiz (parmak izi tutmadi ya da paket yok)."
+    if _run([VENV_PY, "-m", "pip", "check"]).returncode:
+        return "pip check: paketler uyumsuz."
+    tara = os.path.join(TARAYICI, "tara.py")
+    if not os.path.isfile(tara):
+        return f"Acik tarayici yok: {tara} (kurulum: ~/.claude/tools/tedarik/BENIOKU.md)"
+    if _run([os.path.join(TARAYICI, "Scripts", "python.exe"), "-X", "utf8", tara, "--disable-pip", "-r", req]).returncode:
+        return "Bilinen acik bulundu (yukarida)."
+    if _run([VENV_PY, "-m", "pytest", "-q"]).returncode:
+        return "Testler gecmedi."
+    return ""
+
+
 def build_all():
     if not os.path.isfile(os.path.join(ROOT, "license_secret.txt")):
         return "license_secret.txt yok: lisanssiz EXE yayinlanmaz."
-    r = _run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
+    problem = temiz_ortam()
+    if problem:
+        return problem
+    r = _run([VENV_PY, "-m", "PyInstaller", "--noconfirm", "--clean",
               "--distpath", "dist", "--workpath", os.path.join("build", "work"),
               os.path.join("build", "CheckList.spec")])
     if r.returncode:

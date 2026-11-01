@@ -9,3 +9,4 @@ build/out/
 src_backup/
 src_new/
 .superpowers/
+build/venv/
